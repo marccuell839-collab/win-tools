@@ -1,8 +1,7 @@
-# VoiceForge — Arabic-first AI Voice Clone Studio
-Android app + private self-hosted Chatterbox Multilingual V3 Python backend. Read prompted scripts, record a WAV sample, type new text and generate WAV speech in your own voice. Tone slider maps to exaggeration; voice fidelity varies.
+# VoiceForge — Android voice studio
 
-Run backend with Python 3.11: cd server && pip install -r requirements.txt && python -m uvicorn main:app --host 0.0.0.0 --port 8000
+Android client for voice recording, prompted reading, Arabic/French/English text, and synthesized WAV playback. The app does **not** need a personal computer, but the included Chatterbox backend requires GPU/CPU compute **somewhere**. To use voice cloning from your phone only, deploy the backend to a hosted GPU environment, configure an HTTPS endpoint in the Android app, and keep it private with authentication. A fully on-device voice-cloning model has **not** been integrated yet.
 
-In app set http://PC-LAN-IP:8000 (emulator: http://10.0.2.2:8000). Keep LAN private: endpoint is HTTP only for development. Model weights downloaded on first launch. Do not deploy publicly without TLS/authentication/rate limits. Only clone voices with explicit consent.
+Build APK from GitHub Actions on the voiceforge-app branch. Download the voiceforge-debug artifact when the run succeeds. Python server is optional deployment source for a hosted service. The current server is a prototype; do not expose it publicly without TLS, authorization, rate limits, and resource quotas. Voice samples and generated files are sensitive personal data. Use only your own voice or voices with informed consent.
 
-Build: gradle :app:assembleDebug or GitHub Actions on branch voiceforge-app. Full enhanced source with WAV playback and sharing available as a ZIP in the associated ChatGPT conversation.
+Current limitations: no verified APK build yet; backend inference untested; basic expressive slider does not guarantee specific emotions; server upload endpoint is not production-hardened.
