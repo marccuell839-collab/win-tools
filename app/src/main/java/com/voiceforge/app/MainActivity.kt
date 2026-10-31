@@ -60,7 +60,7 @@ class MainActivity:ComponentActivity() {
  override fun onDestroy(){stopRecord();audioPlayer?.release();super.onDestroy()}
  override fun onCreate(savedInstanceState:Bundle?){super.onCreate(savedInstanceState)
   setContent {
-   var endpoint by remember{mutableStateOf(getPreferences(0).getString("api","http://10.0.2.2:8000")?:"")}
+   var endpoint by remember{mutableStateOf(getPreferences(0).getString("api","")?:"")}
    var phrase by remember{mutableStateOf("مرحباً، أنا جارڤيس، وهذا كلام جديد بصوتي!")}
    var promptIndex by remember{mutableIntStateOf(0)}
    var lang by remember{mutableStateOf("ar")}
@@ -87,7 +87,8 @@ class MainActivity:ComponentActivity() {
      Text("مستوى التعبير: ${(mood*100).toInt()}%")
      Slider(value=mood,onValueChange={mood=it},valueRange=.2f.. .9f)
      Button(enabled=!busy && !active && phrase.isNotBlank(),onClick={
-      if(!::sample.isInitialized || !sample.exists()){status.value="سجّل العينة أولاً"}
+      if(!endpoint.startsWith("https://")){status.value="أدخل رابط خدمة صوت آمنة HTTPS أولاً"}
+      else if(!::sample.isInitialized || !sample.exists()){status.value="سجّل العينة أولاً"}
       else{busy=true;status.value="جاري التوليد";scope.launch{
        try {val bytes=withContext(Dispatchers.IO){send(endpoint.trimEnd('/'),phrase,lang,mood,sample)}
         val target=File(getExternalFilesDir(null),"voice-${UUID.randomUUID()}.wav");target.writeBytes(bytes)
