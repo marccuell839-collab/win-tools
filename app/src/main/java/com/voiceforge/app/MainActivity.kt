@@ -50,8 +50,8 @@ class MainActivity:ComponentActivity() {
    val pcm=output.toByteArray()
    val header=ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
    header.put("RIFF".toByteArray());header.putInt(pcm.size+36);header.put("WAVEfmt ".toByteArray())
-   header.putInt(16);header.putShort(1);header.putShort(1);header.putInt(rate);header.putInt(rate*2)
-   header.putShort(2);header.putShort(16);header.put("data".toByteArray());header.putInt(pcm.size)
+   header.putInt(16);header.putShort(1.toShort());header.putShort(1.toShort());header.putInt(rate);header.putInt(rate*2)
+   header.putShort(2.toShort());header.putShort(16.toShort());header.put("data".toByteArray());header.putInt(pcm.size)
    sample.outputStream().use{it.write(header.array());it.write(pcm)}
    runOnUiThread{status.value="تم حفظ عينة من ${pcm.size/48000} ثانية"}
   }
