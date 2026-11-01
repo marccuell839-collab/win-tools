@@ -4,7 +4,7 @@ A black PySide6 window containing only an animated orbital core and a Settings b
 
 ## Install
 
-Download **JARVIS-Windows-x64** from the latest successful GitHub Actions run. Extract the entire ZIP and run `JARVIS.exe` beside its `_internal` directory. No Python installation is required.
+Download **JARVIS-Single-EXE-Windows-x64** from the latest successful GitHub Actions run. Extract the ZIP and run the single `JARVIS.exe` from any writable folder. It embeds the Python runtime including `python311.dll` and its dependencies; you must NOT need an `_internal` directory or Python installed. The first launch can take longer while PyInstaller unpacks its runtime to a temporary folder. `JARVIS.ico` is the included original Windows icon. Windows SmartScreen can warn about unsigned new executables.
 
 ## Setup
 

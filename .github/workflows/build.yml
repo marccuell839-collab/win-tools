@@ -8,11 +8,13 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          architecture: x64
           cache: pip
       - name: Install dependencies
         run: python -m pip install -r requirements.txt pytest pyinstaller
@@ -20,14 +22,34 @@ jobs:
         run: python -m pytest -q
       - name: Render and smoke-test interface
         run: python -m tests.smoke_ui
-      - name: Package portable app
-        run: python -m PyInstaller --noconfirm --windowed --onedir --name JARVIS --collect-all edge_tts --hidden-import keyring.backends.Windows --hidden-import pynput.keyboard._win32 --hidden-import pynput.mouse._win32 main.py
-      - name: Include instructions
-        run: Copy-Item README.md dist/JARVIS/README.md
+      - name: Generate original JARVIS icon
+        run: python tools/make_icon.py
+      - name: Build single-file EXE with embedded Python runtime
+        shell: pwsh
+        run: |
+          python -m PyInstaller --noconfirm --clean --windowed --onefile --name JARVIS --icon assets/jarvis.ico --add-data "assets/jarvis.png;assets" --collect-all edge_tts --hidden-import keyring.backends.Windows --hidden-import pynput.keyboard._win32 --hidden-import pynput.mouse._win32 main.py
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
+      - name: Verify EXE boots, loads Python DLL and renders Qt
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path "dist/JARVIS.exe").Path
+          $proc = Start-Process -FilePath $exe -ArgumentList "--self-test" -PassThru -Wait
+          if ($proc.ExitCode -ne 0) {
+            if (Test-Path jarvis-self-test-error.txt) { Get-Content jarvis-self-test-error.txt }
+            throw "JARVIS.exe self-test failed with code $($proc.ExitCode)"
+          }
+          if ((Get-Item $exe).Length -lt 1000000) { throw "JARVIS.exe is unexpectedly small" }
+      - name: Prepare standalone download
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item dist/JARVIS.exe release/JARVIS.exe
+          Copy-Item README.md release/README.md
+          Copy-Item assets/jarvis.ico release/JARVIS.ico
       - uses: actions/upload-artifact@v4
         with:
-          name: JARVIS-Windows-x64
-          path: dist/JARVIS/
+          name: JARVIS-Single-EXE-Windows-x64
+          path: release/
           if-no-files-found: error
           retention-days: 30
       - uses: actions/upload-artifact@v4

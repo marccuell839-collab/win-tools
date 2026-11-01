@@ -1,3 +1,4 @@
+import sys
 import json
 import threading
 import time
@@ -133,8 +134,17 @@ class Window(QWidget):
         top=QHBoxLayout();top.addStretch();self.gear=QPushButton('⚙');self.gear.setObjectName('gear')
         self.gear.setAccessibleName('الإعدادات');self.gear.setToolTip('الإعدادات · Ctrl+,');self.gear.clicked.connect(self.open_settings);top.addWidget(self.gear);outer.addLayout(top)
         self.orb=Core();outer.addWidget(self.orb,1)
-        pix=QPixmap(64,64);pix.fill(Qt.black);p=QPainter(pix);p.setPen(QPen(QColor('#7fe7e9'),3));p.drawEllipse(9,9,46,46);p.end()
-        self.setWindowIcon(QIcon(pix));self.tray=QSystemTrayIcon(QIcon(pix),self)
+        # The same original icon is used by the EXE, window and system tray.
+        root = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parents[1]))
+        icon_path = root / 'assets' / 'jarvis.png'
+        if icon_path.is_file():
+            app_icon = QIcon(str(icon_path))
+        else:
+            pix = QPixmap(64, 64);pix.fill(Qt.black)
+            p = QPainter(pix);p.setPen(QPen(QColor('#7fe7e9'),3))
+            p.drawEllipse(9,9,46,46);p.end()
+            app_icon = QIcon(pix)
+        self.setWindowIcon(app_icon);self.tray=QSystemTrayIcon(app_icon,self)
         menu=QMenu();menu.addAction('إظهار',self.restore);menu.addAction('الإعدادات',self.open_settings)
         menu.addAction('استئناف الاستماع',self.resume_listening);menu.addAction('إيقاف',self.stop);menu.addAction('خروج',self.quit)
         self.tray.setContextMenu(menu);self.tray.activated.connect(lambda r:self.restore() if r==QSystemTrayIcon.Trigger else None);self.tray.show()
