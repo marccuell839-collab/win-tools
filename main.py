@@ -9,7 +9,7 @@ def self_test():
     os.environ['QT_QPA_PLATFORM'] = 'offscreen'
     def stage(name):
         with open('jarvis-self-test-progress.txt', 'a', encoding='utf-8') as log:
-            log.write(name + '\\n')
+            log.write(name + '\n')
             log.flush()
     try:
         stage('boot')
@@ -40,16 +40,16 @@ def self_test():
         stage('jarvis modules')
         bundle = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
         dll_name = f'python{sys.version_info.major}{sys.version_info.minor}.dll'
-        if sys.platform == 'win32':
-            if not (bundle / dll_name).is_file():
-                raise RuntimeError(f'{dll_name} is missing from the PyInstaller bundle: {bundle}')
-            ctypes.WinDLL(dll_name)
+        if sys.platform == 'win32' and not (bundle / dll_name).is_file():
+            raise RuntimeError(f'{dll_name} is missing from the PyInstaller bundle: {bundle}')
+        stage('Python DLL present')
+        # QIcon loading PNG creates Qt pixmaps; QApplication must exist first.
+        app = QApplication([])
+        stage('QApplication')
         icon = bundle / 'assets' / 'jarvis.png'
         if not icon.is_file() or QIcon(str(icon)).isNull():
             raise RuntimeError('Bundled JARVIS icon is missing or unreadable')
-        stage('dll and icon')
-        app = QApplication([])
-        stage('QApplication')
+        stage('icon loaded')
         app.setStyleSheet(STYLE)
         core = Core()
         core.resize(320,320)
