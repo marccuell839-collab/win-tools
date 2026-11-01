@@ -7,21 +7,37 @@ from pathlib import Path
 def self_test():
     """Run inside the packaged EXE on Windows CI to catch DLL/Qt failures."""
     os.environ['QT_QPA_PLATFORM'] = 'offscreen'
+    def stage(name):
+        with open('jarvis-self-test-progress.txt', 'a', encoding='utf-8') as log:
+            log.write(name + '\\n')
+            log.flush()
     try:
+        stage('boot')
         import ctypes
+        stage('ctypes')
         import keyring
+        stage('keyring')
         import miniaudio
+        stage('miniaudio')
         import edge_tts
+        stage('edge_tts')
         import sounddevice
+        stage('sounddevice')
         import websocket
+        stage('websocket')
         import pyautogui
+        stage('pyautogui')
         import pynput
+        stage('pynput')
         from PySide6.QtWidgets import QApplication
         from PySide6.QtGui import QIcon
+        stage('Qt')
         from jarvis.ui import Window, STYLE
+        stage('jarvis.ui')
         from jarvis.visuals import Core
         from jarvis.core import Agent, Desktop
         from jarvis.listening import Listener
+        stage('jarvis modules')
         bundle = Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent))
         dll_name = f'python{sys.version_info.major}{sys.version_info.minor}.dll'
         if sys.platform == 'win32':
@@ -31,12 +47,16 @@ def self_test():
         icon = bundle / 'assets' / 'jarvis.png'
         if not icon.is_file() or QIcon(str(icon)).isNull():
             raise RuntimeError('Bundled JARVIS icon is missing or unreadable')
+        stage('dll and icon')
         app = QApplication([])
+        stage('QApplication')
         app.setStyleSheet(STYLE)
         core = Core()
         core.resize(320,320)
+        stage('Core created')
         core.show()
         app.processEvents()
+        stage('Qt rendered')
         if core.grab().isNull():
             raise RuntimeError('Qt could not render the JARVIS core')
         core.close()
