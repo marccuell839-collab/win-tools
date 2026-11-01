@@ -1,410 +1,320 @@
 import json
-import math
 import threading
+import time
 from pathlib import Path
-
 import keyring
-from PySide6.QtCore import Qt, QTimer, Signal, QThread, QSettings, QRectF, QUrl
-from PySide6.QtGui import QColor, QPainter, QPen, QFont, QIcon, QPixmap
-from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QLineEdit, QTextEdit, QDialog, QFormLayout, QComboBox, QCheckBox,
-    QMessageBox, QSystemTrayIcon, QMenu, QDialogButtonBox)
+import numpy as np
+import miniaudio
+from PySide6.QtCore import Qt, QTimer, Signal, QThread, QSettings
+from PySide6.QtGui import QColor, QPainter, QPen, QIcon, QPixmap, QShortcut, QKeySequence
+from PySide6.QtWidgets import (QApplication,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,
+    QLineEdit,QTextEdit,QDialog,QFormLayout,QComboBox,QCheckBox,QMessageBox,QSystemTrayIcon,
+    QMenu,QDialogButtonBox,QTabWidget,QSpinBox)
 try:
     import sounddevice as sd
-except (ImportError, OSError):
-    sd = None
-import miniaudio
-import numpy as np
-from .core import Agent, Desktop
-from .voice import transcribe, edge_synthesize
+except (ImportError,OSError): sd=None
+from .visuals import Core
+from .core import Agent,Desktop
+from .voice import edge_synthesize
+from .listening import Listener,wake_command
 
-from .visuals import Core as Orb
-
-STYLE = """
-QWidget { background:#080f16; color:#d7e5e7; font-family:'Segoe UI'; font-size:13px; }
-QLabel { background:transparent; }
-QLabel#brand {color:#e8f3f2; font-size:19px; font-weight:600; letter-spacing:5px;}
-QLabel#eyebrow {color:#75b9bb; font-family:Consolas; font-size:10px; letter-spacing:2px;}
-QLabel#sub {color:#81979f; font-size:11px;}
-QLabel#greeting {color:#edf4ef; font-size:32px; font-weight:300;}
-QLabel#headline {color:#dcf0ec; font-size:21px; font-weight:400;}
-QLabel#detail {color:#92a6ad; font-size:12px;}
-QLabel#status {color:#b6e9df; font-size:12px;}
-QWidget#card {background:#0c1720; border:1px solid #1b303a; border-radius:12px;}
-QWidget#command {background:#10202a; border:1px solid #29424b; border-radius:16px;}
-QLineEdit,QTextEdit,QComboBox {background:#101e28; color:#e4efed; border:1px solid #29414b; border-radius:9px; padding:11px; selection-background-color:#2d626b;}
-QLineEdit#commandInput {background:transparent; border:0; font-size:16px; padding:12px;}
-QTextEdit {font-size:13px;}
-QPushButton {background:#10212b; border:1px solid #29404a; border-radius:8px; padding:10px 14px; color:#b9cdd0;}
-QPushButton:hover {background:#1a323c; border-color:#6ea5aa; color:#f1fffc;}
-QPushButton:pressed {background:#254650;}
-QPushButton:disabled {color:#536c75; border-color:#1a2c35;}
-QPushButton#quiet {background:transparent; border:0; color:#8caaaf; padding:7px 10px;}
-QPushButton#quiet:hover {background:#132630; color:#d6f6ee;}
-QPushButton#stop {background:#251b20; border-color:#493038; color:#dcacaf;}
-QPushButton#primary {background:#b1e8dc; border:0; color:#102f32; font-weight:600;}
-QPushButton#primary:hover {background:#d4fff1;}
-QCheckBox {color:#8fa7ae; font-size:11px; spacing:8px; background:transparent;}
-QCheckBox::indicator {width:14px;height:14px;border:1px solid #44616d;border-radius:4px;background:#0d1c26;}
-QCheckBox::indicator:checked {background:#9ad7ce;border-color:#9ad7ce;}
-QToolTip {background:#16303b;color:#e4f5ef;border:1px solid #416774;padding:7px;}
-"""
+STYLE='''
+QWidget {background:#000;color:#cce8e9;font-family:'Segoe UI';font-size:13px;}
+QDialog,QTabWidget::pane {background:#080f16;}
+QLabel {background:transparent;}
+QPushButton {background:#10212b;border:1px solid #29404a;border-radius:8px;padding:10px 16px;}
+QPushButton:hover {background:#203d48;}
+QPushButton:disabled {color:#536770;}
+QPushButton#gear {background:transparent;border:0;color:#76989e;font-size:22px;padding:8px;}
+QLineEdit,QTextEdit,QComboBox,QSpinBox {background:#101d26;border:1px solid #29414b;border-radius:7px;padding:9px;}
+QCheckBox {spacing:10px;background:transparent;}
+QTabBar::tab {background:#10212b;padding:12px;}
+QTabBar::tab:selected {background:#24434d;}
+'''
 
 class Job(QThread):
-    result = Signal(str)
-    error = Signal(str)
-    status = Signal(str)
-    approval = Signal(object)
-    def __init__(self, kind, payload, config, history):
-        super().__init__()
-        self.kind,self.payload,self.config,self.history = kind,payload,config,history
-        self.cancel = threading.Event()
-        self.gate = threading.Event()
-        self.accepted = False
+    result=Signal(str); error=Signal(str); status=Signal(str); approval=Signal(object)
+    def __init__(self,kind,payload,config,history):
+        super().__init__();self.kind=kind;self.payload=payload;self.config=config;self.history=history
+        self.cancel=threading.Event();self.gate=threading.Event();self.accepted=False
+        self.value=None
     def approve(self,args):
-        self.accepted = False
-        self.gate.clear()
-        self.approval.emit(args)
+        self.accepted=False;self.gate.clear();self.approval.emit(args)
         while not self.gate.wait(.1):
             if self.cancel.is_set(): return False
         return self.accepted and not self.cancel.is_set()
     def run(self):
         try:
-            if self.kind == 'agent':
-                agent = Agent(self.config['or_key'],self.config['model'],Desktop(),self.approve,self.status.emit,self.cancel)
-                answer = agent.run(self.payload,self.history)
-            elif self.kind == 'transcribe':
-                answer = transcribe(self.config['dg_key'],self.payload,self.config['stt_language'])
-            else:
-                answer = edge_synthesize(self.payload,self.config['voice'],self.config['tone'])
-            self.result.emit(answer)
-        except Exception as exc:
-            self.error.emit(f'{type(exc).__name__}: {exc}')
+            if self.kind=='agent':
+                value=Agent(self.config['or_key'],self.config['model'],Desktop(),self.approve,
+                    self.status.emit,self.cancel).run(self.payload,self.history,vision=self.config['vision'])
+            else: value=edge_synthesize(self.payload,self.config['voice'],self.config['tone'])
+            self.result.emit(value)
+        except Exception as exc: self.error.emit(f'{type(exc).__name__}: {exc}')
 
 class Settings(QDialog):
     def __init__(self,parent):
-        super().__init__(parent)
-        self.setWindowTitle('JARVIS · الإعدادات')
-        self.setMinimumWidth(480)
-        form = QFormLayout(self)
-        self.fields = {}
-        c = parent.config()
-        for key,label in [('or_key','OpenRouter API key'),('dg_key','Deepgram key · اختياري للميكروفون'),('model','Free model')]:
-            edit = QLineEdit(c[key])
-            if key.endswith('_key'): edit.setEchoMode(QLineEdit.Password)
-            form.addRow(label, edit)
-            self.fields[key] = edit
-        for key,label,choices in [
-            ('voice','الصوت الرجالي · Edge TTS',['ar-DZ-IsmaelNeural','ar-SA-HamedNeural','ar-EG-ShakirNeural','en-GB-RyanNeural']),
-            ('tone','النبرة',['serious','calm','energetic']),
-            ('stt_language','لغة الميكروفون',['ar','en','fr'])]:
-            box = QComboBox()
-            box.addItems(choices)
-            box.setCurrentText(c[key])
-            form.addRow(label,box)
-            self.fields[key] = box
-        self.voice_enabled = QCheckBox('نطق الردود عبر Edge TTS · إنترنت، دون مفتاح')
-        self.voice_enabled.setChecked(c['speak'])
-        form.addRow(self.voice_enabled)
-        info = QLabel('النبرة تغيّر السرعة والحدة، وليست محاكاة مشاعر كاملة.\nالمفاتيح تُحفظ في Windows Credential Manager.\nDeepgram اختياري وقد يستهلك رصيدًا. لا توجد نماذج محلية ثقيلة.')
-        info.setWordWrap(True)
-        form.addRow(info)
-        buttons = QDialogButtonBox(QDialogButtonBox.Save|QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.save)
-        buttons.rejected.connect(self.reject)
-        form.addRow(buttons)
+        super().__init__(parent);self.setWindowTitle('JARVIS · الإعدادات');self.resize(680,600)
+        root=QVBoxLayout(self);tabs=QTabWidget();root.addWidget(tabs);self.fields={};self.checks={}
+        c=parent.config()
+        def page(title):
+            w=QWidget();f=QFormLayout(w);f.setSpacing(16);tabs.addTab(w,title);return f
+        general=page('الذكاء والرؤية')
+        for key,title in [('or_key','مفتاح OpenRouter'),('model','النموذج المجاني')]:
+            w=QLineEdit(c[key]);self.fields[key]=w
+            if key.endswith('key'):w.setEchoMode(QLineEdit.Password)
+            general.addRow(title,w)
+        def check(form,key,text):
+            w=QCheckBox(text);w.setChecked(c[key]);self.checks[key]=w;form.addRow(w)
+        check(general,'vision','تفعيل الرؤية: إرسال لقطات الشاشة إلى OpenRouter')
+        note=QLabel('الرؤية تلتقط الشاشة عند الأمر وبعد الخطوات، وتشمل التطبيقات الظاهرة.\nالشاشة الرئيسية فقط. يتم إخفاء جارفيس أثناء التصوير.\nالنقر والكتابة يحتاجان تأكيدك. لا توجد مراقبة مصوّرة مستمرة.')
+        note.setWordWrap(True);general.addRow(note)
+        audio=page('الصوت والاستماع')
+        k=QLineEdit(c['dg_key']);k.setEchoMode(QLineEdit.Password);self.fields['dg_key']=k;audio.addRow('مفتاح Deepgram',k)
+        for key,title,options in [('voice','الصوت',['ar-DZ-IsmaelNeural','ar-SA-HamedNeural','ar-EG-ShakirNeural','en-GB-RyanNeural']),
+            ('tone','النبرة',['serious','calm','energetic']),('stt_language','لغة الاستماع',['ar','en','fr'])]:
+            w=QComboBox();w.addItems(options);w.setCurrentText(c[key]);self.fields[key]=w;audio.addRow(title,w)
+        check(audio,'speak','نطق الردود عبر Edge TTS · دون مفتاح')
+        check(audio,'listen','استماع مستمر لكلمة جارفيس عبر Deepgram')
+        warning=QLabel('عند التفعيل، يُرسل صوت الميكروفون إلى Deepgram حتى قبل كلمة النداء، وقد يستهلك رصيدًا.\nيتوقف الميكروفون أثناء الرد والتنفيذ لمنع سماع نفسه.\nقل «جارفيس»، انتظر «نعم سيدي»، ثم أمْلِ أمرك.\nبعد الرد يمكنك متابعة الحديث؛ قل «شكرا جارفيس» للعودة للانتظار.')
+        warning.setWordWrap(True);audio.addRow(warning)
+        device=QComboBox();device.addItem('ميكروفون النظام الافتراضي',-1)
+        if sd:
+            try:
+                for index,d in enumerate(sd.query_devices()):
+                    if d['max_input_channels']>0:device.addItem(d['name'],index)
+            except Exception:pass
+        ix=device.findData(c['device']);device.setCurrentIndex(max(0,ix));self.device=device;audio.addRow('الميكروفون',device)
+        idle=QSpinBox();idle.setRange(10,120);idle.setValue(c['idle']);idle.setSuffix(' ثانية');self.idle=idle;audio.addRow('مهلة متابعة الحديث',idle)
+        display=page('الواجهة والتحكم')
+        check(display,'greeting','الترحيب الصوتي عند التشغيل')
+        check(display,'quiet','تقليل الحركة')
+        check(display,'topmost','إبقاء الدائرة فوق النوافذ')
+        display.addRow(QLabel('Ctrl+Alt+Esc: إيقاف التنفيذ والاستماع\nCtrl+,: الإعدادات · F11: ملء الشاشة\nإغلاق النافذة: العمل من شريط النظام'))
+        resume=QPushButton('استئناف الاستماع');resume.clicked.connect(parent.resume_listening);display.addRow(resume)
+        stop=QPushButton('إيقاف فوري');stop.clicked.connect(parent.stop);display.addRow(stop)
+        chat=page('المحادثة والسجل')
+        self.history=QTextEdit();self.history.setReadOnly(True);self.history.setPlainText('\n'.join(parent.logs));chat.addRow(self.history)
+        self.command=QLineEdit();self.command.setPlaceholderText('اكتب أمرًا أو رسالة');chat.addRow(self.command)
+        send=QPushButton('إرسال');send.clicked.connect(self.send);self.command.returnPressed.connect(self.send);chat.addRow(send)
+        refresh=QPushButton('تحديث السجل');refresh.clicked.connect(lambda:self.history.setPlainText('\n'.join(parent.logs)));chat.addRow(refresh)
+        clear=QPushButton('مسح المحادثة');clear.clicked.connect(self.clear);chat.addRow(clear)
+        buttons=QDialogButtonBox(QDialogButtonBox.Save|QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.save);buttons.rejected.connect(self.reject);root.addWidget(buttons)
+    def clear(self):self.parent().history.clear();self.parent().logs.clear();self.history.clear()
+    def send(self):
+        text=self.command.text().strip()
+        if text:self.accept();QTimer.singleShot(0,lambda:self.parent().submit(text))
     def save(self):
-        model = self.fields['model'].text().strip()
-        if model != 'openrouter/free' and not model.endswith(':free'):
-            QMessageBox.warning(self,'Model','اختر openrouter/free أو نموذجًا ينتهي بـ :free')
-            return
+        model=self.fields['model'].text().strip()
+        if model!='openrouter/free' and not model.endswith(':free'):
+            QMessageBox.warning(self,'Model','اختر نموذجًا مجانيًا ينتهي بـ :free');return
+        if self.checks['listen'].isChecked() and not self.fields['dg_key'].text().strip():
+            QMessageBox.warning(self,'Microphone','أضف مفتاح Deepgram لتفعيل الاستماع.');return
         try:
-            for key,field in self.fields.items():
-                value = field.text().strip() if isinstance(field,QLineEdit) else field.currentText()
-                if key.endswith('_key'):
-                    keyring.set_password('YacineJarvis',key,value)
-                else: self.parent().prefs.setValue(key,value)
-            self.parent().prefs.setValue('speak',self.voice_enabled.isChecked())
-            self.parent().refresh_connection()
-            self.accept()
-        except Exception as exc:
-            QMessageBox.warning(self,'Key storage failed',str(exc))
+            for key,w in self.fields.items():
+                value=w.text().strip() if isinstance(w,QLineEdit) else w.currentText()
+                if key.endswith('_key'):keyring.set_password('YacineJarvis',key,value)
+                else:self.parent().prefs.setValue(key,value)
+            for key,w in self.checks.items():self.parent().prefs.setValue(key,w.isChecked())
+            self.parent().prefs.setValue('device',self.device.currentData());self.parent().prefs.setValue('idle',self.idle.value())
+            self.parent().paused=False;self.parent().apply_settings();self.accept()
+        except Exception as exc:QMessageBox.warning(self,'Settings',str(exc))
 
 class Window(QWidget):
-    emergency = Signal()
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle('JARVIS · Yacine')
-        self.setWindowFlags(self.windowFlags()|Qt.WindowStaysOnTopHint)
-        self.resize(1100,780)
-        self.setMinimumSize(940,720)
-        self.prefs = QSettings('Appnova','YacineJarvis')
-        self.jobs = set()
-        self.current = None
-        self.history = []
-        self.recording = None
-        self.frames = []
-        self.recorded_samples = 0
-        self.audio_file = None
-        self.dialog = None
-        self.quitting = False
-        self.play_timer = QTimer(self)
-        self.play_timer.timeout.connect(self.playback_changed)
-        self.play_timer.start(250)
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(36,26,36,22)
-        outer.setSpacing(12)
-        def label(text,name='sub'):
-            w=QLabel(text); w.setObjectName(name); return w
-        top=QHBoxLayout()
-        top.addWidget(label('J A R V I S','brand'))
-        top.addWidget(label('  /  PERSONAL INTELLIGENCE','eyebrow'))
-        top.addStretch()
-        self.motion=QPushButton('حركة هادئة'); self.motion.setObjectName('quiet')
-        self.motion.setCheckable(True); top.addWidget(self.motion)
-        settings=QPushButton('الإعدادات'); settings.setObjectName('quiet')
-        settings.clicked.connect(lambda: Settings(self).exec()); top.addWidget(settings)
-        outer.addLayout(top)
-        divider=QWidget(); divider.setFixedHeight(1); divider.setStyleSheet('background:#21313a;'); outer.addWidget(divider)
-        greeting=QHBoxLayout(); greeting.setContentsMargins(0,12,0,0)
-        greeting.addWidget(label('مساحتك. بصوتك.','greeting')); greeting.addStretch()
-        identity=QVBoxLayout(); identity.addWidget(label('YACINE / PRIVATE DESKTOP','eyebrow'))
-        identity.addWidget(label('مصمّم ليكون امتدادًا لأوامرك.','detail'))
-        greeting.addLayout(identity); outer.addLayout(greeting)
-        body=QHBoxLayout(); body.setSpacing(16)
-        left=QVBoxLayout(); left.setSpacing(15); left.addStretch()
-        left.addWidget(label('01  /  CONNECTION','eyebrow'))
-        left.addWidget(label('حاضر يا ياسين.','headline'))
-        intro=label('اكتب ما تريد، أو سجّل صوتك.\nخطوة بخطوة، أمام عينيك.','detail')
-        intro.setWordWrap(True); left.addWidget(intro)
-        left.addSpacing(16)
-        for title,prompt in [('افتح موقعًا  ↗','افتح موقع '),('ساعدني في مهمة  ↗','ساعدني في '),('اشرح ما على الشاشة  ↗','اشرح لي ما يظهر على شاشتي')]:
-            button=QPushButton(title); button.setObjectName('quiet')
-            button.clicked.connect(lambda checked=False,text=prompt:self.prefill(text))
-            left.addWidget(button)
-        left.addStretch()
-        left_widget=QWidget(); left_widget.setFixedWidth(218); left_widget.setLayout(left); body.addWidget(left_widget)
-        self.orb=Orb(); body.addWidget(self.orb,1)
-        self.motion.toggled.connect(self.set_motion)
-        right=QVBoxLayout(); right.setSpacing(12); right.addStretch()
-        def card(kicker,title,detail):
-            box=QWidget(); box.setObjectName('card')
-            layout=QVBoxLayout(box); layout.setContentsMargins(16,16,16,16); layout.setSpacing(8)
-            layout.addWidget(label(kicker,'eyebrow'))
-            heading=label(title,'detail'); heading.setWordWrap(True); layout.addWidget(heading)
-            sub=label(detail,'sub'); sub.setWordWrap(True); layout.addWidget(sub)
-            right.addWidget(box)
-            return heading
-        self.connection=card('INTELLIGENCE','OpenRouter','نموذج مجاني · يحتاج مفتاحك')
-        card('VOICE ENGINE','صوت عربي رجالي','Edge TTS · دون مفتاح')
-        self.screen_state=card('DESKTOP ACCESS','الرؤية متوقفة','تتحكّم أنت في كل خطوة')
-        right.addStretch()
-        right_widget=QWidget(); right_widget.setFixedWidth(190); right_widget.setLayout(right); body.addWidget(right_widget)
-        outer.addLayout(body,1)
-        self.status=label('●  جاهز · في انتظار أوامرك','status'); self.status.setAlignment(Qt.AlignCenter); outer.addWidget(self.status)
-        command=QWidget(); command.setObjectName('command')
-        command_row=QHBoxLayout(command); command_row.setContentsMargins(10,8,10,8)
-        self.input=QLineEdit(); self.input.setObjectName('commandInput'); self.input.setPlaceholderText('ماذا نفعل اليوم، ياسين؟')
-        self.input.setAlignment(Qt.AlignRight); self.input.returnPressed.connect(self.submit); command_row.addWidget(self.input,1)
-        self.mic=QPushButton('تسجيل صوتي'); self.mic.clicked.connect(self.toggle_record); command_row.addWidget(self.mic)
-        self.send=QPushButton('تنفيذ  ↗'); self.send.setObjectName('primary'); self.send.clicked.connect(self.submit); command_row.addWidget(self.send)
-        outer.addWidget(command)
-        permission=QHBoxLayout()
-        self.screen=QCheckBox('السماح بإرسال لقطات الشاشة إلى OpenRouter لهذه الجلسة')
-        self.screen.toggled.connect(lambda on:self.screen_state.setText('الرؤية مفعّلة لهذه الجلسة' if on else 'الرؤية متوقفة'))
-        permission.addWidget(self.screen); permission.addStretch()
-        stop=QPushButton('إيقاف'); stop.setObjectName('stop'); stop.clicked.connect(self.stop); permission.addWidget(stop)
-        outer.addLayout(permission)
-        bottom=QHBoxLayout()
-        self.activity_button=QPushButton('سجل النشاط  +'); self.activity_button.setObjectName('quiet'); self.activity_button.setCheckable(True)
-        bottom.addWidget(self.activity_button); bottom.addStretch()
-        bottom.addWidget(label('CTRL + ALT + ESC  /  STOP','eyebrow'))
-        bottom.addStretch(); bottom.addWidget(label('APPNOVA  /  DESKTOP EDITION','eyebrow'))
-        outer.addLayout(bottom)
-        self.logbox=QTextEdit(); self.logbox.setReadOnly(True); self.logbox.setFixedHeight(145); self.logbox.hide()
-        self.activity_button.toggled.connect(self.toggle_activity); outer.addWidget(self.logbox)
-        self.log('JARVIS','جاهز يا ياسين. أضف مفتاح OpenRouter في الإعدادات.')
-        self.record_timer = QTimer(self); self.record_timer.setSingleShot(True); self.record_timer.timeout.connect(self.finish_record)
-        self.emergency.connect(self.stop)
-        self.listener = None
+    emergency=Signal()
+    def __init__(self,boot=True):
+        super().__init__();self.setWindowTitle('JARVIS');self.resize(900,720);self.setMinimumSize(440,480)
+        self.prefs=QSettings('Appnova','YacineJarvis');self.jobs=set();self.current=None;self.history=[];self.logs=[]
+        self.audio_file=None;self.playing=False;self.after_speech=None;self.voice_listener=None;self.listeners=set()
+        self.paused=False;self.quitting=False;self.dialog=None;self.settings_open=False
+        self.session=False;self.deadline=0;self.pending_command='';self.next_voice=None;self.ready_at=0;self.pending_action=False;self.epoch=0
+        outer=QVBoxLayout(self);outer.setContentsMargins(20,12,20,25)
+        top=QHBoxLayout();top.addStretch();self.gear=QPushButton('⚙');self.gear.setObjectName('gear')
+        self.gear.setAccessibleName('الإعدادات');self.gear.setToolTip('الإعدادات · Ctrl+,');self.gear.clicked.connect(self.open_settings);top.addWidget(self.gear);outer.addLayout(top)
+        self.orb=Core();outer.addWidget(self.orb,1)
+        pix=QPixmap(64,64);pix.fill(Qt.black);p=QPainter(pix);p.setPen(QPen(QColor('#7fe7e9'),3));p.drawEllipse(9,9,46,46);p.end()
+        self.setWindowIcon(QIcon(pix));self.tray=QSystemTrayIcon(QIcon(pix),self)
+        menu=QMenu();menu.addAction('إظهار',self.restore);menu.addAction('الإعدادات',self.open_settings)
+        menu.addAction('استئناف الاستماع',self.resume_listening);menu.addAction('إيقاف',self.stop);menu.addAction('خروج',self.quit)
+        self.tray.setContextMenu(menu);self.tray.activated.connect(lambda r:self.restore() if r==QSystemTrayIcon.Trigger else None);self.tray.show()
+        self.emergency.connect(self.stop);self.hotkey=None
         try:
             from pynput.keyboard import GlobalHotKeys
-            self.listener = GlobalHotKeys({'<ctrl>+<alt>+<esc>':self.emergency.emit})
-            self.listener.start()
-        except Exception as exc: self.log('HOTKEY',str(exc))
-        pix = QPixmap(64,64); pix.fill(QColor('#07101b'))
-        paint = QPainter(pix); paint.setPen(QPen(QColor('#63e5ff'),5)); paint.drawEllipse(10,10,44,44); paint.end()
-        self.setWindowIcon(QIcon(pix))
-        self.tray = QSystemTrayIcon(QIcon(pix),self)
-        menu = QMenu(); menu.addAction('إظهار JARVIS',self.restore); menu.addAction('إيقاف',self.stop); menu.addAction('خروج',self.quit)
-        self.tray.setContextMenu(menu); self.tray.activated.connect(lambda reason:self.restore() if reason == QSystemTrayIcon.Trigger else None); self.tray.show()
-        self.tray.setToolTip('JARVIS · Yacine')
-        self.refresh_connection()
-    def refresh_connection(self):
-        self.connection.setText('OpenRouter · مفتاح محفوظ' if self.config()['or_key'] else 'OpenRouter · أضف مفتاحك')
-    def prefill(self,text):
-        self.input.setText(text); self.input.setFocus()
-    def set_motion(self,quiet):
-        self.orb.reduce_motion = quiet
-        self.motion.setText('تشغيل الحركة' if quiet else 'حركة هادئة')
-        self.orb.update()
-    def toggle_activity(self,visible):
-        self.logbox.setVisible(visible)
-        self.activity_button.setText('سجل النشاط  −' if visible else 'سجل النشاط  +')
-    def set_status(self,text):
-        translations={'ANALYZING':'جاري التفكير','EXECUTING':'جاري التنفيذ','LISTENING':'أسمعك'}
-        for key,value in translations.items(): text=text.replace(key,value)
-        self.status.setText('●  '+text)
-        if 'التفكير' in text: self.orb.mode='thinking'
+            self.hotkey=GlobalHotKeys({'<ctrl>+<alt>+<esc>':self.emergency.emit});self.hotkey.start()
+        except Exception as exc:self.log('HOTKEY',str(exc))
+        QShortcut(QKeySequence('Ctrl+,'),self,activated=self.open_settings)
+        QShortcut(QKeySequence('F11'),self,activated=lambda:self.showNormal() if self.isFullScreen() else self.showFullScreen())
+        self.timer=QTimer(self);self.timer.timeout.connect(self.tick);self.timer.start(150)
+        self.apply_settings()
+        if boot:QTimer.singleShot(600,self.boot)
     def config(self):
-        def secret(key):
-            try: return keyring.get_password('YacineJarvis',key) or ''
-            except Exception: return ''
-        return {'or_key':secret('or_key'),'dg_key':secret('dg_key'),
-            'model':self.prefs.value('model','openrouter/free'),
-            'voice':self.prefs.value('voice','ar-DZ-IsmaelNeural'),
-            'tone':self.prefs.value('tone','serious'),
-            'stt_language':self.prefs.value('stt_language','ar'),
-            'speak':self.prefs.value('speak',True,type=bool)}
+        def secret(k):
+            try:return keyring.get_password('YacineJarvis',k) or ''
+            except Exception:return ''
+        c={k:self.prefs.value(k,v) for k,v in dict(model='openrouter/free',voice='ar-DZ-IsmaelNeural',tone='serious',stt_language='ar').items()}
+        for k,v in dict(speak=True,vision=False,listen=False,greeting=True,quiet=False,topmost=False).items():c[k]=self.prefs.value(k,v,type=bool)
+        c.update(or_key=secret('or_key'),dg_key=secret('dg_key'),device=self.prefs.value('device',-1,type=int),idle=self.prefs.value('idle',30,type=int))
+        return c
+    def apply_settings(self):
+        self.cached=self.config();self.orb.reduce_motion=self.cached['quiet']
+        visible=self.isVisible();self.setWindowFlag(Qt.WindowStaysOnTopHint,self.cached['topmost'])
+        if visible:self.show()
+        self.halt_listener()
+    def boot(self):
+        if self.cached['greeting']:
+            ready=self.cached['or_key'] and self.cached['dg_key'] and self.cached['listen']
+            self.say('مرحبا سيدي، كل الأنظمة شغالة.' if ready else 'مرحبا سيدي. أكمل إعداداتي لنبدأ.')
+        else:self.resume_listening()
     def log(self,who,text):
-        self.logbox.append('')
-        cursor = self.logbox.textCursor(); cursor.movePosition(cursor.MoveOperation.End)
-        cursor.insertText(f'{who}  ›  {text}\n')
-        self.logbox.setTextCursor(cursor); self.logbox.ensureCursorVisible()
-    def restore(self):
-        self.showNormal(); self.raise_(); self.activateWindow()
+        self.logs.append(f'{who} › {text}');self.logs=self.logs[-150:]
+        if who in ('ERROR','MIC'):
+            self.gear.setToolTip(text+'\nافتح الإعدادات للتفاصيل')
+            self.tray.showMessage('JARVIS',text,QSystemTrayIcon.Warning,5000)
+    def restore(self):self.showNormal();self.raise_();self.activateWindow()
+    def open_settings(self):
+        if self.settings_open:return
+        self.settings_open=True;self.halt_listener()
+        try:Settings(self).exec()
+        finally:self.settings_open=False
+    def set_status(self,text):
+        self.orb.mode='thinking';self.orb.active=True;self.tray.setToolTip('JARVIS · '+text)
+    def halt_listener(self):
+        if self.voice_listener:self.voice_listener.cancel.set();self.voice_listener=None
+    def resume_listening(self):self.paused=False;self.session=False;self.deadline=0
+    def start_listener(self):
+        if self.listeners or self.voice_listener:return
+        c=self.cached
+        listener=Listener(c['dg_key'],c['stt_language'],None if c['device']<0 else c['device'])
+        self.listeners.add(listener);self.voice_listener=listener
+        listener.ready.connect(lambda:self.listener_ready(listener))
+        listener.utterance.connect(lambda text:self.heard(listener,text))
+        listener.error.connect(lambda text:self.listener_error(listener,text))
+        listener.finished.connect(lambda:self.listener_finished(listener));listener.start()
+    def listener_ready(self,listener):
+        if self.voice_listener is listener:
+            self.tray.setToolTip('JARVIS · الميكروفون يعمل · قل جارفيس')
+            if self.session:self.deadline=time.monotonic()+self.cached['idle']
+    def listener_error(self,listener,text):
+        if self.voice_listener is listener:self.paused=True;self.log('MIC',text)
+    def listener_finished(self,listener):
+        self.listeners.discard(listener)
+        if self.voice_listener is listener:self.voice_listener=None
+        listener.deleteLater();self.maybe_quit()
+    def heard(self,listener,text):
+        if listener is not self.voice_listener or self.current or self.playing or self.paused:return
+        if self.session and time.monotonic()>self.deadline:self.session=False
+        if self.session and any(x in text for x in ['شكرا جارفيس','شكراً جارفيس','انتهينا','توقف عن الاستماع']):
+            self.session=False;self.say('حاضر سيدي.');return
+        command=wake_command(text)
+        if not self.session:
+            if command is None:return
+            self.halt_listener();self.pending_command=command;self.say('نعم سيدي.',self.arm_command);return
+        self.submit(command if command else text)
+    def arm_command(self):
+        self.session=True;self.deadline=time.monotonic()+self.cached['idle']
+        if self.pending_command:
+            command=self.pending_command;self.pending_command='';self.submit(command)
+    def tick(self):
+        try:playing=sd is not None and sd.get_stream().active
+        except RuntimeError:playing=False
+        if self.playing and not playing:
+            self.playing=False;self.stop_audio();self.ready_at=time.monotonic()+.5
+            callback=self.after_speech;self.after_speech=None
+            if callback:callback()
+        if not self.current:
+            self.orb.mode='speaking' if playing else ('listening' if self.session and self.voice_listener else 'ready')
+            self.orb.active=playing or bool(self.session and self.voice_listener)
+        if self.session and not self.current and not playing and self.deadline and time.monotonic()>self.deadline:self.session=False
+        if not (self.current or self.pending_action or playing or self.paused or self.quitting or self.settings_open) and time.monotonic()>self.ready_at:
+            if self.cached['listen'] and self.cached['dg_key']:self.start_listener()
     def start_job(self,kind,payload):
-        job = Job(kind,payload,self.config(),list(self.history))
-        self.jobs.add(job); self.current = job
-        self.send.setEnabled(False); self.mic.setEnabled(False); self.orb.active = True
-        self.orb.mode = 'thinking'
-        self.set_status('جاري تجهيز الرد الصوتي…' if kind == 'voice' else 'جاري العمل…')
-        job.status.connect(self.set_status)
-        job.approval.connect(self.approve)
-        job.result.connect(lambda result:self.result(job,result))
-        job.error.connect(lambda err:self.log('ERROR',err))
-        job.finished.connect(lambda:self.finished(job))
-        job.start()
+        self.halt_listener();job=Job(kind,payload,self.cached,list(self.history));self.jobs.add(job);self.current=job
+        job.status.connect(self.set_status);job.approval.connect(self.approve)
+        job.result.connect(lambda value:self.result(job,value));job.error.connect(lambda text:self.log('ERROR',text))
+        job.finished.connect(lambda:self.finished(job));self.set_status('جاري العمل');job.start()
+    def result(self,job,value):job.value=value
     def finished(self,job):
         self.jobs.discard(job)
-        if self.current is job:
-            self.current = None; self.send.setEnabled(True); self.mic.setEnabled(True)
-            self.orb.active = False; self.set_status('جاهز · في انتظار أوامرك')
-        job.deleteLater()
-        if self.quitting and not self.jobs: QApplication.quit()
-    def submit(self):
-        text = self.input.text().strip()
-        if not text or self.current or self.recording: return
-        if not self.config()['or_key']:
-            Settings(self).exec(); return
-        if not self.screen.isChecked():
-            QMessageBox.information(self,'Screen permission','التحكم يحتاج موافقتك على إرسال لقطات الشاشة. فعّل الخيار فوق حقل الأوامر.'); return
-        self.stop_audio(); self.input.clear(); self.log('YACINE',text)
-        self.hide()
-        self.start_job('agent',text)
-    def result(self,job,value):
+        if self.current is job:self.current=None
+        value=job.value
         if job.cancel.is_set():
-            if job.kind == 'voice': Path(value).unlink(missing_ok=True)
-            return
-        if job.kind == 'agent':
-            self.history.extend([{'role':'user','content':job.payload},{'role':'assistant','content':value}])
-            self.history = self.history[-8:]
-            self.log('JARVIS',value)
-            if self.config()['speak']:
-                # Start next job after this thread has fully finished.
-                job.finished.connect(lambda:self.start_job('voice',value) if not job.cancel.is_set() and not self.quitting else None)
-        elif job.kind == 'transcribe':
-            self.input.setText(value)
-            self.log('MIC','راجع الأمر ثم اضغط تنفيذ.' if value else 'لم يتم التعرّف على كلام.')
+            if job.kind=='voice' and value:Path(value).unlink(missing_ok=True)
+        elif value:
+            if job.kind=='agent':
+                self.history.extend([{'role':'user','content':job.payload},{'role':'assistant','content':value}]);self.history=self.history[-8:]
+                self.log('JARVIS',value);self.restore();self.say(value,self.follow_up)
+            else:
+                try:
+                    if sd is None:raise RuntimeError('Audio backend unavailable')
+                    decoded=miniaudio.decode_file(value,output_format=miniaudio.SampleFormat.SIGNED16,nchannels=1,sample_rate=24000)
+                    self.audio_file=value;sd.play(np.frombuffer(decoded.samples,dtype=np.int16),24000);self.playing=True
+                except Exception as exc:
+                    Path(value).unlink(missing_ok=True);self.log('ERROR',str(exc));self.finish_silent()
         else:
-            self.stop_audio(); self.audio_file = value
-            try:
-                if sd is None: raise RuntimeError('Audio backend unavailable; text mode still works.')
-                decoded = miniaudio.decode_file(value, output_format=miniaudio.SampleFormat.SIGNED16, nchannels=1, sample_rate=24000)
-                sd.play(np.frombuffer(decoded.samples, dtype=np.int16), 24000)
-                self.orb.active = True
-            except Exception as exc:
-                self.log('VOICE',str(exc))
+            self.restore()
+            if job.kind=='voice':self.finish_silent()
+        job.deleteLater();self.maybe_quit()
+    def follow_up(self):self.session=True;self.deadline=time.monotonic()+self.cached['idle']
+    def finish_silent(self):
+        callback=self.after_speech;self.after_speech=None
+        if callback:callback()
+    def say(self,text,after=None):
+        if self.current:return
+        self.halt_listener();self.after_speech=after
+        if self.cached['speak']:self.start_job('voice',text)
+        else:self.finish_silent()
+    def submit(self,text):
+        if self.current or self.pending_action or not text.strip():return
+        if not self.cached['or_key']:
+            self.log('ERROR','أضف مفتاح OpenRouter في الإعدادات.');self.say('أضف مفتاح الذكاء في الإعدادات، سيدي.');return
+        self.paused=False;self.stop_audio();self.halt_listener();self.log('YACINE',text)
+        self.hide()
+        # Give the compositor time to reveal the target applications before capture.
+        self.ready_at=time.monotonic()+2
+        self.pending_action=True;epoch=self.epoch
+        def begin():
+            if epoch!=self.epoch:return
+            self.pending_action=False
+            if not self.paused and not self.quitting:self.start_job('agent',text)
+        QTimer.singleShot(350,begin)
     def approve(self,args):
-        job = self.current
-        if not job or job.cancel.is_set(): return
-        self.dialog = QMessageBox(self)
-        self.dialog.setWindowTitle('تأكيد التحكم · JARVIS')
+        job=self.current
+        if not job or job.cancel.is_set():return
+        self.restore();self.dialog=QMessageBox(self)
+        self.dialog.setWindowTitle('تأكيد التحكم')
         self.dialog.setText('السماح بهذه الخطوة؟\n'+json.dumps(args,ensure_ascii=False,indent=2))
-        self.dialog.setStandardButtons(QMessageBox.Yes|QMessageBox.No)
-        self.dialog.setDefaultButton(QMessageBox.No)
-        self.restore()
-        accepted = self.dialog.exec() == QMessageBox.Yes
-        self.dialog = None
+        self.dialog.setStandardButtons(QMessageBox.Yes|QMessageBox.No);self.dialog.setDefaultButton(QMessageBox.No)
+        accepted=self.dialog.exec()==QMessageBox.Yes;self.dialog=None
         if accepted and not job.cancel.is_set():
             self.hide()
-            # Allow focus to return to the target before releasing worker.
-            def release():
-                job.accepted = True; job.gate.set()
+            def release():job.accepted=True;job.gate.set()
             QTimer.singleShot(450,release)
-        else: job.gate.set()
-    def toggle_record(self):
-        if self.recording:
-            self.finish_record(); return
-        if self.current: return
-        if not self.config()['dg_key']:
-            QMessageBox.information(self,'Microphone','Edge TTS ينطق فقط. للتعرّف على كلامك أضف Deepgram key، أو اكتب الأمر.'); return
-        self.stop_audio()
-        try:
-            import sounddevice as sd
-            self.frames = []; self.recorded_samples = 0
-            def callback(data,frames,time,status):
-                if self.recorded_samples < 16000*30:
-                    self.frames.append(bytes(data)); self.recorded_samples += frames
-            self.recording = sd.RawInputStream(samplerate=16000,channels=1,dtype='int16',callback=callback)
-            self.recording.start(); self.mic.setText('■ إنهاء التسجيل'); self.send.setEnabled(False)
-            self.set_status('LISTENING · تسجيل حتى 30 ثانية'); self.orb.active = True; self.orb.mode = 'listening'
-            self.record_timer.start(30000)
-        except Exception as exc:
-            self.close_recording(); self.log('MIC',str(exc))
-    def close_recording(self):
-        self.record_timer.stop()
-        if self.recording:
-            self.recording.stop(); self.recording.close(); self.recording = None
-        self.mic.setText('تسجيل صوتي'); self.send.setEnabled(not bool(self.current))
-    def finish_record(self):
-        if not self.recording: return
-        self.close_recording()
-        pcm = b''.join(self.frames); self.frames.clear()
-        if pcm: self.start_job('transcribe',pcm)
-    def playback_changed(self):
-        try: playing = sd is not None and sd.get_stream().active
-        except RuntimeError: playing = False
-        if not self.current and not self.recording:
-            self.orb.active = playing
-            self.orb.mode = 'speaking' if playing else 'ready'
-
+        else:job.gate.set()
     def stop_audio(self):
-        if sd is not None: sd.stop()
+        if sd:sd.stop()
+        self.playing=False
         if self.audio_file:
-            try: Path(self.audio_file).unlink(missing_ok=True)
-            except OSError: pass
-            self.audio_file = None
+            try:Path(self.audio_file).unlink(missing_ok=True)
+            except OSError:pass
+            self.audio_file=None
     def stop(self):
-        for job in self.jobs: job.cancel.set(); job.gate.set()
-        if self.dialog: self.dialog.reject()
-        self.close_recording(); self.frames.clear(); self.stop_audio()
-        self.set_status('توقّف بأمرك'); self.orb.active = False; self.orb.mode = 'ready'
+        self.epoch+=1;self.pending_action=False
+        self.paused=True;self.session=False;self.pending_command='';self.after_speech=None;self.halt_listener()
+        for job in self.jobs:job.cancel.set();job.gate.set()
+        if self.dialog:self.dialog.reject()
+        self.stop_audio();self.orb.active=False;self.orb.mode='ready';self.tray.setToolTip('JARVIS · متوقف')
     def closeEvent(self,event):
-        if QSystemTrayIcon.isSystemTrayAvailable():
-            event.ignore(); self.hide()
-        else:
-            event.ignore(); self.quit()
+        event.ignore()
+        if QSystemTrayIcon.isSystemTrayAvailable():self.hide()
+        else:self.quit()
+    def maybe_quit(self):
+        if self.quitting and not self.jobs and not self.listeners:QApplication.quit()
     def quit(self):
-        self.quitting = True; self.stop(); self.hide(); self.tray.hide()
-        if self.listener: self.listener.stop()
-        if not self.jobs: QApplication.quit()
-
+        self.quitting=True;self.stop();self.hide();self.tray.hide()
+        if self.hotkey:self.hotkey.stop()
+        self.maybe_quit()
 
 def launch(argv):
-    app = QApplication(argv)
-    app.setQuitOnLastWindowClosed(False)
-    app.setStyleSheet(STYLE)
-    window = Window(); window.show()
-    sys_exit = app.exec()
-    raise SystemExit(sys_exit)
+    app=QApplication(argv);app.setQuitOnLastWindowClosed(False);app.setStyleSheet(STYLE)
+    window=Window();window.show();raise SystemExit(app.exec())

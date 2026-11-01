@@ -38,7 +38,7 @@ def test_denied_action_never_executes(client):
     agent = Agent('key','openrouter/free',desktop,lambda _:False,lambda _:None,threading.Event())
     assert agent.run('click') == 'Action cancelled.'
     desktop.execute.assert_not_called()
-    desktop.snapshot.assert_not_called()
+    desktop.snapshot.assert_called_once()
 
 @patch('jarvis.core.httpx.Client')
 def test_cancel_while_approving_never_executes(client):
@@ -76,5 +76,17 @@ def test_execute_then_observe(client):
     agent = Agent('key','openrouter/free',desktop,lambda _:True,lambda _:None,threading.Event())
     assert agent.run('click') == 'Done.'
     desktop.execute.assert_called_once()
-    desktop.snapshot.assert_called_once()
+    assert desktop.snapshot.call_count == 2
     assert post.call_count == 2
+
+@patch('jarvis.core.httpx.Client')
+def test_no_vision_no_screenshots_or_tools(client):
+    desktop=Mock()
+    r=Mock(status_code=200,is_error=False)
+    r.json.return_value={'choices':[{'message':{'content':'Hello'}}]}
+    post=client.return_value.__enter__.return_value.post
+    post.return_value=r
+    agent=Agent('key','openrouter/free',desktop,lambda _:True,lambda _:None,threading.Event())
+    assert agent.run('Hello',vision=False)=='Hello'
+    desktop.snapshot.assert_not_called()
+    assert 'tools' not in post.call_args.kwargs['json']

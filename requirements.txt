@@ -9,3 +9,4 @@ pyperclip>=1.9,<2
 pynput>=1.8,<2
 edge-tts>=7.2,<8
 miniaudio>=1.61,<2
+websocket-client>=1.8,<2

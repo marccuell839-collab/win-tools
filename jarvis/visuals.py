@@ -42,7 +42,7 @@ class Core(QWidget):
         glow = QRadialGradient(0, 0, 235)
         glow.setColorAt(0, QColor(45,134,155,28))
         glow.setColorAt(.58, QColor(31,116,132,22))
-        glow.setColorAt(1, QColor(8,16,23,0))
+        glow.setColorAt(1, QColor(0,0,0,0))
         p.setPen(Qt.NoPen); p.setBrush(glow); p.drawEllipse(QRectF(-235,-235,470,470))
         p.setBrush(Qt.NoBrush)
         for radius in (153,182,196):
@@ -83,7 +83,7 @@ class Core(QWidget):
             p.setPen(QPen(QColor(86,193,211,52),.65)); p.drawPath(path)
         # Center plate makes typography legible over the spherical mesh.
         inner = QRadialGradient(0,0,110)
-        inner.setColorAt(0,QColor(7,18,25,248)); inner.setColorAt(.6,QColor(7,18,25,225)); inner.setColorAt(1,QColor(7,18,25,0))
+        inner.setColorAt(0,QColor(0,0,0,248)); inner.setColorAt(.6,QColor(0,0,0,225)); inner.setColorAt(1,QColor(0,0,0,0))
         p.setPen(Qt.NoPen); p.setBrush(inner); p.drawEllipse(QRectF(-110,-110,220,220)); p.setBrush(Qt.NoBrush)
         p.setPen(QColor('#c3f8f2'))
         font = QFont('Segoe UI',25,QFont.Light); font.setLetterSpacing(QFont.AbsoluteSpacing,7)
