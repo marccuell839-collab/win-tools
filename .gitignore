@@ -1,9 +1,5 @@
-__pycache__/
-*.pyc
-.venv/
-build/
-dist/
-*.spec
+node_modules/
 .env
-ui-preview.png
-.pytest_cache/
+.env.*
+!.env.example
+.DS_Store
