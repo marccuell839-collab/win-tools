@@ -10,6 +10,8 @@ on:
       - 'wrangler.jsonc'
       - 'package.json'
       - 'build.mjs'
+      - 'images/**'
+      - 'dist/**'
       - '.github/workflows/cloudflare-workers.yml'
 permissions:
   contents: read
