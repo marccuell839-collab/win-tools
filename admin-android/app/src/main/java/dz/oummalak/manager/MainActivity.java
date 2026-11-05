@@ -37,7 +37,8 @@ public class MainActivity extends Activity {
     prefs=getSharedPreferences("manager",MODE_PRIVATE);
     pubKey=prefs.getString("public_key",BuildConfig.SUPABASE_KEY);
     access=prefs.getString("access","");refresh=prefs.getString("refresh","");
-    if(pubKey.isEmpty()) setupKey(); else if(access.isEmpty()) loginPage(); else verifyAdmin();
+    render();
+    if(!pubKey.isEmpty() && !access.isEmpty()) verifyAdmin();
   }
   private void work(Work w){pool.execute(()->{try{w.run();}catch(Exception e){runOnUiThread(()->error(e.getMessage()));}});}
   private void ui(Runnable r){runOnUiThread(r);}
@@ -148,19 +149,22 @@ public class MainActivity extends Activity {
     });
   }
   private void render(){
-    if(!authenticated){loginPage();return;}
-    init("مرحبًا بكِ ♡","إدارة إبداعاتك بدون ضغط الصور، مع مزامنة مباشرة للموقع.");
+    init("مرحبًا بكِ ♡", authenticated ? "المزامنة والنشر مفعلان على هذا الجهاز." : "لوحة الإدارة تفتح مباشرة. اربط صلاحية النشر من نفس الواجهة مرة واحدة.");
+    if(!authenticated){
+      page.addView(text("صلاحية النشر: غير مربوطة. لن تتغير بيانات الموقع العام قبل إثبات ملكية الحساب.",14,WINE,true));
+      button("⚙ ربط صلاحية النشر من هنا",()->{if(pubKey.isEmpty()) setupKey(); else loginPage();});
+    }
     headerNav();
     if(section.equals("products"))productPage();else if(section.equals("site"))sitePage();else socialPage();
-    button("تحديث البيانات ↻",this::loadAll);
-    button("تسجيل الخروج",()->{
+    if(authenticated) button("تحديث البيانات ↻",this::loadAll);
+    if(authenticated) button("فصل صلاحية النشر",()->{
       work(()->{try{request("POST","/auth/v1/logout",new byte[0],"application/json",true);}catch(Exception ignored){}
-        access="";refresh="";prefs.edit().remove("access").remove("refresh").apply();ui(this::loginPage);});
+        access="";refresh="";prefs.edit().remove("access").remove("refresh").apply();ui(this::render);});
     });
   }
   private void productPage(){
     page.addView(text("المنتجات المنشورة: "+products.length(),18,WINE,true));
-    button("+ إضافة منتج جديد",()->productEditor(null));
+    button("+ إضافة منتج جديد",()->{if(!authenticated){error("اربط صلاحية النشر من أعلى لوحة الإدارة أولًا.");return;}productEditor(null);});
     for(int i=0;i<products.length();i++){
       JSONObject p=products.optJSONObject(i);if(p==null)continue;
       page.addView(text("✧ "+p.optString("title")+"   |   "+p.optString("category"),17,WINE,true));
@@ -231,6 +235,7 @@ public class MainActivity extends Activity {
       ui(()->{Toast.makeText(this,"تم الحذف",Toast.LENGTH_SHORT).show();loadAll();});});
   }
   private void sitePage(){
+    if(!authenticated){page.addView(text("يمكن تعديل محتوى الموقع بعد ربط صلاحية النشر من الصفحة الرئيسية.",15,WINE,false));return;}
     heroField=field("العنوان الرئيسي",site.optString("hero_title","أم ملاك"),false);
     subtitleField=field("العنوان الفرعي",site.optString("hero_subtitle"),false);
     aboutField=field("وصف الصفحة",site.optString("hero_description"),true);
@@ -248,6 +253,7 @@ public class MainActivity extends Activity {
     });
   }
   private void socialPage(){
+    if(!authenticated){page.addView(text("اربط صلاحية النشر أولًا لإضافة حسابات التواصل.",15,WINE,false));return;}
     page.addView(text("روابط شبكات التواصل",19,WINE,true));
     for(int i=0;i<socials.length();i++){
       JSONObject x=socials.optJSONObject(i);if(x==null)continue;
