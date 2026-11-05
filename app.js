@@ -1,19 +1,28 @@
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.0';
-const config=await fetch('./config.json',{cache:'no-store'}).then(r=>r.json()).catch(()=>({}));
-const supabase=config.supabaseUrl && config.supabasePublishableKey ? createClient(config.supabaseUrl,config.supabasePublishableKey) : null;
-const $=s=>document.querySelector(s);const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const samples=[{id:'demo-1',title:'قطعة عنابية مطرّزة',category:'جلابيات',description:'تصميم أنيق ولمسات تطريز راقية.',image_url:'https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=900&q=85',sample:true},{id:'demo-2',title:'لمسة من الفخامة',category:'قفاطين',description:'أناقة مناسبة للمناسبات واللحظات المميزة.',image_url:'https://images.unsplash.com/photo-1539008835657-9e8e9680c956?w=900&q=85',sample:true},{id:'demo-3',title:'تفاصيل ناعمة',category:'تصاميم خاصة',description:'تصاميم مستوحاة من البساطة والجمال.',image_url:'https://images.unsplash.com/photo-1483985988355-763728e1935b?w=900&q=85',sample:true}];
-let products=[],filter='الكل',session=null;
-const notice=msg=>{const n=$('#notice');n.textContent=msg;n.style.display='block';setTimeout(()=>n.style.display='none',3800)};
-setTimeout(()=>$('#splash').classList.add('done'),1350);$('#year').textContent=new Date().getFullYear();
-const whatsapp=(config.whatsapp||'').replace(/\D/g,'');if(whatsapp){$('#contactBtn').href='https://wa.me/'+whatsapp+'?text='+encodeURIComponent('السلام عليكم، حبيت نستفسر على إبداعات أم ملاك');$('#contactBtn').textContent='تواصلي عبر واتساب ↗';$('#contactHint').textContent='نردّ عليكِ في أقرب وقت إن شاء الله.'}else{$('#contactBtn').removeAttribute('href');$('#contactBtn').addEventListener('click',()=>notice('رقم التواصل لم يضاف بعد.'))}
-function render(){const cats=['الكل',...new Set(products.map(p=>p.category))];$('#filters').replaceChildren(...cats.map(c=>{const b=document.createElement('button');b.textContent=c;b.className=c===filter?'active':'';b.onclick=()=>{filter=c;render()};return b}));const shown=filter==='الكل'?products:products.filter(p=>p.category===filter);$('#empty').hidden=shown.length>0;$('#products').innerHTML=shown.map(p=>'<article class="product"><div class="thumb"><img loading="lazy" src="'+esc(p.image_url)+'" alt="'+esc(p.title)+'"></div><div class="product-info"><span>'+esc(p.category)+(p.sample?' • صورة توضيحية':'')+'</span><h3>'+esc(p.title)+'</h3><p>'+esc(p.description||'صُنعت بحب وإتقان')+'</p>'+(p.price!=null?'<p>'+Number(p.price).toLocaleString('ar-DZ')+' دج</p>':'')+'<a '+(whatsapp?'href="https://wa.me/'+whatsapp+'?text='+encodeURIComponent('السلام عليكم، نحب نسقسي على '+p.title)+'" target="_blank" rel="noopener"':'href="#contact"')+'>استفسري عن القطعة ←</a></div></article>').join('');}
-async function refresh(){if(!supabase){products=samples;render();return}const {data,error}=await supabase.from('om_malak_products').select('id,title,category,description,price,image_url').eq('published',true).order('created_at',{ascending:false});if(error){console.error(error);notice('تعذر تحميل الإبداعات');products=[]}else products=data||[];filter='الكل';render();refreshAdmin()}
-function refreshAdmin(){if(!session)return;$('#adminList').innerHTML=products.map(p=>'<div class="admin-item"><span>'+esc(p.title)+'</span><button data-remove="'+esc(p.id)+'">حذف</button></div>').join('');}
-$('#adminOpen').onclick=()=>$('#adminDialog').showModal();$('#closeAdmin').onclick=()=>$('#adminDialog').close();
-async function applySession(s){session=s;$('#loginPane').hidden=!!s;$('#managePane').hidden=!s;if(s)refreshAdmin()}
-$('#loginBtn').onclick=async()=>{if(!supabase)return notice('لم تتم تهيئة قاعدة البيانات بعد');const {data,error}=await supabase.auth.signInWithPassword({email:$('#adminEmail').value,password:$('#adminPassword').value});if(error)return notice('تعذر الدخول: '+error.message);const {data:allowed,error:roleError}=await supabase.from('om_malak_admins').select('user_id').eq('user_id',data.user.id).maybeSingle();if(roleError||!allowed){await supabase.auth.signOut();return notice('هذا الحساب غير مخوّل للإدارة')}applySession(data.session);notice('مرحبا بيكِ ❤️')};
-$('#logoutBtn').onclick=async()=>{await supabase.auth.signOut();applySession(null)};
-$('#productForm').onsubmit=async e=>{e.preventDefault();if(!supabase||!session)return;const form=e.currentTarget;const file=form.image.files[0];if(!file||file.size>5*1024*1024||!['image/jpeg','image/png','image/webp'].includes(file.type))return notice('اختاري صورة JPG أو PNG أو WebP أقل من 5MB');const ext=file.type.split('/')[1].replace('jpeg','jpg');const path=crypto.randomUUID()+'.'+ext;const b=form.querySelector('button[type=submit]');b.disabled=true;b.textContent='جاري الحفظ...';try{const uploaded=await supabase.storage.from('om-malak-gallery').upload(path,file,{contentType:file.type,upsert:false});if(uploaded.error)throw uploaded.error;const url=supabase.storage.from('om-malak-gallery').getPublicUrl(path).data.publicUrl;const price=form.price.value?Number(form.price.value):null;const saved=await supabase.from('om_malak_products').insert({title:form.title.value,category:form.category.value,description:form.description.value,price,image_url:url,storage_path:path});if(saved.error){await supabase.storage.from('om-malak-gallery').remove([path]);throw saved.error}form.reset();await refresh();notice('تمت إضافة الإبداع بنجاح ✨')}catch(err){notice('تعذر الحفظ: '+err.message)}finally{b.disabled=false;b.textContent='حفظ الإبداع'}};
-$('#adminList').onclick=async e=>{const id=e.target.dataset.remove;if(!id||!confirm('هل تريدين حذف هذا المنتج؟'))return;const {error}=await supabase.from('om_malak_products').delete().eq('id',id);if(error)return notice('تعذر الحذف');await refresh();notice('تم حذف المنتج')};
-if(supabase){const {data}=await supabase.auth.getSession();if(data.session){const {data:admin}=await supabase.from('om_malak_admins').select('user_id').eq('user_id',data.session.user.id).maybeSingle();if(admin)applySession(data.session)}supabase.auth.onAuthStateChange((_event,s)=>{if(!s)applySession(null)})}refresh();
+// أم ملاك — Public portfolio. Products are published through reviewed GitHub updates.
+// Administration will be added later as a separate application.
+const $=s=>document.querySelector(s);
+const products=[
+{title:'تشكيلة الأم والبنت',category:'جلابيات',description:'طقم أنيق باللون العنابي وتفاصيل مطرزة بعناية. للاستفسار عن المقاسات والتفصيل، تواصلي مع أم ملاك على فيسبوك.',image:'./images/oum-malak-original.jpg'},
+{title:'لمسات أم ملاك',category:'جلابيات',description:'تفاصيل التشكيلة العنابية بتوقيع أم ملاك. للاستفسار عن الطلبات والألوان، تواصلي معنا على فيسبوك.',image:'./images/oum-malak-watermark.jpg'}
+];
+const FACEBOOK='https://www.facebook.com/share/19drC5x1CW/';
+document.addEventListener('DOMContentLoaded',()=>{
+ const splash=$('#splash');const closeSplash=()=>splash?.classList.add('done');
+ window.addEventListener('load',()=>setTimeout(closeSplash,1100),{once:true});
+ setTimeout(closeSplash,3200);
+ if($('#year'))$('#year').textContent=new Date().getFullYear();
+ const grid=$('#products');if(!grid)return;
+ grid.replaceChildren(...products.map(product=>{
+  const article=document.createElement('article');article.className='product';
+  const thumb=document.createElement('div');thumb.className='thumb';
+  const img=document.createElement('img');img.src=product.image;img.alt=product.title;img.loading='lazy';
+  img.addEventListener('error',()=>{thumb.classList.add('image-unavailable');img.alt='صورة المنتج قيد التجهيز';});
+  thumb.append(img);const info=document.createElement('div');info.className='product-info';
+  const label=document.createElement('span');label.textContent=product.category;
+  const heading=document.createElement('h3');heading.textContent=product.title;
+  const description=document.createElement('p');description.textContent=product.description;
+  const link=document.createElement('a');link.href=FACEBOOK;link.target='_blank';link.rel='noopener noreferrer';link.textContent='استفسري عبر فيسبوك ←';
+  info.append(label,heading,description,link);article.append(thumb,info);return article;
+ }));
+ if($('#empty'))$('#empty').hidden=true;
+});
