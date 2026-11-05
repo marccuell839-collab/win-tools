@@ -11,7 +11,7 @@ android {
         versionCode = 1
         versionName = "1.0.0"
         buildConfigField("String", "SUPABASE_URL", "\"https://rlgbbkyrpkrfavpvivvg.supabase.co\"")
-        val pubKey = providers.environmentVariable("SUPABASE_PUBLISHABLE_KEY").orNull ?: ""
+        val pubKey = providers.environmentVariable("SUPABASE_PUBLISHABLE_KEY").orNull ?: "sb_publishable_OYSfqXYNNOMsb--JwU85Tw_Fs1pJSue"
         buildConfigField("String", "SUPABASE_KEY", "\""+pubKey+"\"")
     }
     buildFeatures { buildConfig = true }
